@@ -34,19 +34,52 @@ async function run() {
         const usersCollection = client.db('mfs').collection('users');
 
         app.get('/users', async (req, res) => {
-            const result = await usersCollection.find().toArray();
+            const search = req.query.search;
+            const status = req.query.filter;
+            const size = parseInt(req.query.size);
+            const page = parseInt(req.query.page);
+            let query = {}
+            if (search) {
+                query.$or = [
+                    { mobileNumber: new RegExp(search, 'i') },
+                    { email: new RegExp(search, 'i') }
+                ]
+            }
+            if (status) {
+                query.status = status
+            }
+            const skip = (page - 1) * size
+            const result = await usersCollection.find(query).skip(skip).limit(size).toArray();
             res.send(result);
         })
 
-        app.get('/user/:id',async(req,res)=>{
+        // only totalCount
+        app.get('/users-total', async (req, res) => {
+            const search = req.query?.search;
+            const status = req.query?.filter;
+            let query = {};
+            if (search) {
+                query.$or = [
+                    { name: new RegExp(search, 'i') },
+                    { email: new RegExp(search, 'i') }
+                ]
+            }
+            if (status) {
+                query.status = status
+            }
+            const result = await usersCollection.countDocuments(query);
+            res.send({ count: result });
+        })
+
+        app.get('/user/:id', async (req, res) => {
             const id = req.params.id;
-            const query = {_id: new ObjectId(id)};
+            const query = { _id: new ObjectId(id) };
             const result = await usersCollection.findOne(query);
             res.send(result);
         })
         // register a user
         app.post('/register', async (req, res) => {
-            const { name, mobileNumber, email, pin } = req.body;
+            const { name, mobileNumber, email, pin, role } = req.body;
             const hashedPin = await bcryct.hash(pin, 10);
             const user = {
                 name,
@@ -54,8 +87,9 @@ async function run() {
                 mobileNumber,
                 email,
                 status: 'pending',
-                role: 'User',
-                balance: 0
+                role,
+                balance: 0,
+                bonus: false
             }
             const exist = await usersCollection.findOne({ $or: [{ mobileNumber: mobileNumber }, { email: email }] });
             if (exist) return res.send({ message: 'Already as a Account' })
@@ -81,6 +115,30 @@ async function run() {
         app.post('/logout', async (req, res) => {
             const user = req.body;
             res.clearCookie('token', { maxAge: 0 }).send({ success: true })
+        })
+
+        // Manage Users update role
+        app.patch('/user/:id', async (req, res) => {
+            const id = req.params.id;
+            const data = req.body;
+            const query = { _id: new ObjectId(id) };
+            const user = await usersCollection.findOne(query);
+            let balance = user.balance
+            if (user?.bonus === false && user.role === 'User') {
+                balance = 40
+            }
+            if (user?.bonus === false && user.role === 'Agent') {
+                balance = 10000
+            }
+            const updateDoc = {
+                $set: {
+                    ...data,
+                    balance: balance,
+                    bonus: true
+                }
+            }
+            const result = await usersCollection.updateOne(query, updateDoc);
+            res.send(result)
         })
 
         // console.log("Pinged your deployment. You successfully connected to MongoDB!");
